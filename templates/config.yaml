@@ -1,3 +1,5 @@
+room: Shell # The room that the bot reports to
+
 redis:
     scheme: tcp
     host: localhost
