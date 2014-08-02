@@ -1,0 +1,12 @@
+redis:
+    scheme: tcp
+    host: localhost
+    port: 6379
+
+databases:
+    default:
+        adapter: pg     # "mysql", "mysql-libmysqlclient", "sqlite3" or "pg"
+        host: localhost 
+        user: user
+        password: password
+        database: database
