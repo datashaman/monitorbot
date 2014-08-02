@@ -1,9 +1,9 @@
 name: Job Queue
-interval: 5
+interval: 1
 checks:
   - name: Unprocessed
     type: database
     query: select count(1) from things
     warn: 5
     crit: 20
-    storage: queues.job.unprocessed
+    storage: queues:job:unprocessed

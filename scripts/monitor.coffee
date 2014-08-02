@@ -37,28 +37,50 @@ generateValue =
             return done(error) if error?
             done(null, value)
 
+getSecondsTimestamp = (ts=null) ->
+    ts = new Date() if ts is null
+    Math.floor(ts / 1000)
+
+getRoundedTimestamp = (granularity, ts_seconds=null) ->
+    ts_seconds = getSecondsTimestamp() if ts_seconds is null
+    factor = granularity.size * granularity.factor
+    Math.floor(ts_seconds  / factor) * factor
+
+storeData = (key, data) ->
+    ts_seconds = getSecondsTimestamp()
+    for name, granularity of config.storage.granularities
+        ts = getRoundedTimestamp(granularity, ts_seconds)
+        tsKey = key + ':' + name + ':' + ts
+        storage.hset tsKey, ts_seconds, JSON.stringify(data)
+        storage.expireat tsKey, ts + granularity.ttl
+
 checkGroup = (group) ->
     for check in group.checks
         func = generateValue[check.type]
 
-        time = Date.now()
-        func check, group, (error, value) ->
+        func check, group, (error, value) -> 
             return events.emit('error', error) if error?
 
+            state = 'normal'
+
             if checkThreshold(value, check.compare, check.crit)
+                state = 'critical'
                 events.emit 'critical',
                     check: check
                     group: group
                     value: value
 
             else if checkThreshold(value, check.compare, check.warn)
+                state = 'critical'
                 events.emit 'warning',
                     check: check
                     group: group
                     value: value
 
             if check.storage?
-                storage.zadd check.storage, time, value
+                storeData check.storage,
+                    state: state
+                    value: value
 
 events = new EventEmitter
 
@@ -66,12 +88,12 @@ databases = {}
 
 config = loadConfig()
 
-config.redis ||=
+config.storage.redis ||=
     port: 6379
     host: 'localhost'
     options: {}
 
-storage = redis.createClient(config.redis.port or 6379, config.redis.host or 'localhost', config.redis.options or {})
+storage = redis.createClient(config.storage.redis.port or 6379, config.storage.redis.host or 'localhost', config.storage.redis.options or {})
 
 module.exports = (robot) ->
     events.on 'warning', (stream) ->

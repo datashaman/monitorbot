@@ -1,9 +1,31 @@
 room: Shell # The room that the bot reports to
 
-redis:
-    scheme: tcp
-    host: localhost
-    port: 6379
+storage:
+    granularity:
+        second:
+            size: 3600    # Count of values stored in each hash
+            ttl: 7200     # How long the keys live in Redis
+            factor: 1     # Granularity in seconds
+
+        minute:
+            size: 1440
+            ttl: 172800
+            factor: 60
+
+        hour:
+            size: 168
+            ttl: 1209600
+            factor: 3600
+
+        day:
+            size: 365
+            ttl: 63113880
+            factor: 86400
+
+    redis:
+        scheme: tcp
+        host: localhost
+        port: 6379
 
 databases:
     default:
