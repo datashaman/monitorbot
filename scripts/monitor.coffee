@@ -67,7 +67,7 @@ class Monitor extends EventEmitter
         check = stream.check
         room = @getConfig().room or 'Shell'
         compare = check.compare or 'GT'
-        level + ': ' + stream.group.name + ' / ' + check.name + ' : ' + stream.value + ' ' + compare + ' ' + check[level]
+        level.toUpperCase() + ' ' + stream.group.name + ' / ' + check.name + ' : ' + stream.value + ' ' + compare + ' ' + check[level]
 
 monitor = new Monitor
 
@@ -78,7 +78,7 @@ module.exports = (robot) ->
         monitor.on level, (stream) ->
             room = config.room or 'Shell'
             message = monitor.renderCheckStream(level, stream)
-            robot.messageRoom room, '\n' + message
+            robot.messageRoom room, '\n[' + (new Date()).toLocaleString() + '] ' + message
 
     notifyOn('warning')
     notifyOn('critical')
