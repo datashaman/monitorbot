@@ -1,9 +1,15 @@
 name: Job Queue
-interval: 1
+interval: 5
 checks:
   - name: Unprocessed
     type: database
     query: select count(1) from things
-    warn: 5
-    crit: 20
+    warning: 5
+    critical: 20
     storage: queues:job:unprocessed
+  - name: Sum
+    type: database
+    query: select sum(value) from things
+    warning: 5
+    critical: 20
+    storage: queues:job:sum

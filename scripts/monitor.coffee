@@ -1,119 +1,86 @@
-redis = require('redis')
 EventEmitter = require('events').EventEmitter
-DBWrapper = require('node-dbi').DBWrapper
 yaml = require('js-yaml')
 path = require('path')
 fs = require('fs')
 
-determineEnvironment = ->
-    'local'
+class Monitor extends EventEmitter
+    constructor: ->
+        @groups = []
+        @plugins = require(path.resolve('plugins')).apply(@)
+        @checks = require(path.resolve('checks')).apply(@)
 
-loadConfig = ->
-    environment = determineEnvironment()
-    yaml.safeLoad(fs.readFileSync(path.join('config', environment + '.yaml'), 'utf8'))
+    checkThreshold: (value, compare, threshold) ->
+        switch compare
+            when 'GTE' then value >= threshold
+            when 'LTE' then value <= threshold
+            when 'GT' then value > threshold
+            when 'LT' then value < threshold
+            when 'NE' then value != threshold
+            when 'EQ' then value == threshold
+            else value > threshold
 
-initDatabase = (name) ->
-    unless databases[name]?
-        databaseConfig = config.databases[name]
-        databases[name] = new DBWrapper(databaseConfig.adapter, databaseConfig)
-        databases[name].connect()
-    databases[name]
+    checkGroup: (group) ->
+        for check in group.checks
+            func = @checks[check.type]
 
-checkThreshold = (value, compare, threshold) ->
-    switch compare
-        when 'GTE' then value >= threshold
-        when 'LTE' then value <= threshold
-        when 'GT' then value > threshold
-        when 'LT' then value < threshold
-        when 'NE' then value != threshold
-        when 'EQ' then value == threshold
-        else value > threshold
+            do (check, func) =>
+                func check, group, (error, value) => 
+                    return @emit('error', error) if error?
 
-generateValue =
-    database: (check, group, done) ->
-        name = check.database or 'default'
-        db = initDatabase(name)
-        db.fetchOne check.query, [], (error, value) ->
-            return done(error) if error?
-            done(null, value)
+                    state = 'normal'
 
-getSecondsTimestamp = (ts=null) ->
-    ts = new Date() if ts is null
-    Math.floor(ts / 1000)
+                    for level in ['critical', 'warning']
+                        if @checkThreshold(value, check.compare, check[level])
+                            state = level
+                            @emit level,
+                                check: check
+                                group: group
+                                value: value
+                                state: state
+                            break
 
-getRoundedTimestamp = (granularity, ts_seconds=null) ->
-    ts_seconds = getSecondsTimestamp() if ts_seconds is null
-    factor = granularity.size * granularity.factor
-    Math.floor(ts_seconds  / factor) * factor
+                    @emit 'checked',
+                        check: check
+                        # JSON encoding doesn't like this (circular), resolve later
+                        # group: group
+                        value: value
+                        state: state
 
-storeData = (key, data) ->
-    ts_seconds = getSecondsTimestamp()
-    for name, granularity of config.storage.granularities
-        ts = getRoundedTimestamp(granularity, ts_seconds)
-        tsKey = key + ':' + name + ':' + ts
-        storage.hset tsKey, ts_seconds, JSON.stringify(data)
-        storage.expireat tsKey, ts + granularity.ttl
+    determineEnvironment: ->
+        'local'
 
-checkGroup = (group) ->
-    for check in group.checks
-        func = generateValue[check.type]
+    getConfig: ->
+        unless @config?
+            environment = @determineEnvironment()
+            @config = yaml.safeLoad(fs.readFileSync(path.resolve('config', environment + '.yaml'), 'utf8'))
+        @config
 
-        func check, group, (error, value) -> 
-            return events.emit('error', error) if error?
-
-            state = 'normal'
-
-            if checkThreshold(value, check.compare, check.crit)
-                state = 'critical'
-                events.emit 'critical',
-                    check: check
-                    group: group
-                    value: value
-
-            else if checkThreshold(value, check.compare, check.warn)
-                state = 'critical'
-                events.emit 'warning',
-                    check: check
-                    group: group
-                    value: value
-
-            if check.storage?
-                storeData check.storage,
-                    state: state
-                    value: value
-
-events = new EventEmitter
-
-databases = {}
-
-config = loadConfig()
-
-config.storage.redis ||=
-    port: 6379
-    host: 'localhost'
-    options: {}
-
-storage = redis.createClient(config.storage.redis.port or 6379, config.storage.redis.host or 'localhost', config.storage.redis.options or {})
-
-module.exports = (robot) ->
-    events.on 'warning', (stream) ->
-        check = stream.check
-        room = config.room or 'Shell'
-        compare = check.compare or 'GT'
-        robot.messageRoom room, '\nCheck ' + check.name + ' in group ' + stream.group.name + ' warning: ' + stream.value + ' ' + compare + ' ' + check.warn
-
-    events.on 'critical', (stream) ->
-        check = stream.check
-        room = config.room or 'Shell'
-        compare = check.compare or 'GT'
-        robot.messageRoom room, '\nCheck ' + check.name + ' in group ' + stream.group.name + ' critical: ' + stream.value + ' ' + compare + ' ' + check.crit
-
-    try
-        fileNames = fs.readdirSync('groups-enabled')
+    start: ->
+        fileNames = fs.readdirSync(path.resolve('groups-enabled'))
         for fileName in fileNames
             unless fileName[0] == '.'
-                group = yaml.safeLoad(fs.readFileSync(path.join('groups-enabled', fileName), 'utf8'))
-                group.intervalObject = setInterval(checkGroup, group.interval * 1000, group)
+                group = yaml.safeLoad(fs.readFileSync(path.resolve('groups-enabled', fileName), 'utf8'))
+                group.intervalObject = setInterval(((group) => @checkGroup(group)), group.interval * 1000, group)
+                @groups.push(group)
 
-    catch error
-        console.log error
+    renderCheckStream: (level, stream) ->
+        check = stream.check
+        room = @getConfig().room or 'Shell'
+        compare = check.compare or 'GT'
+        level + ': ' + stream.group.name + ' / ' + check.name + ' : ' + stream.value + ' ' + compare + ' ' + check[level]
+
+monitor = new Monitor
+
+module.exports = (robot) ->
+    config = monitor.getConfig()
+
+    notifyOn = (level) ->
+        monitor.on level, (stream) ->
+            room = config.room or 'Shell'
+            message = monitor.renderCheckStream(level, stream)
+            robot.messageRoom room, '\n' + message
+
+    notifyOn('warning')
+    notifyOn('critical')
+
+    monitor.start()
