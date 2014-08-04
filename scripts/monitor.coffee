@@ -6,8 +6,15 @@ fs = require('fs')
 class Monitor extends EventEmitter
     constructor: ->
         @groups = []
-        @plugins = require(path.resolve('plugins')).apply(@)
-        @checks = require(path.resolve('checks')).apply(@)
+        @plugins = @requireFolder('plugins')
+        @checks = @requireFolder('checks')
+
+    requireFolder: (folder) ->
+        files = {}
+        for filename in fs.readdirSync(folder)
+            name = path.basename(filename, '.coffee')
+            files[name] = require(path.resolve(folder, name)).apply(@)
+        files
 
     checkThreshold: (value, compare, threshold) ->
         switch compare
@@ -82,5 +89,8 @@ module.exports = (robot) ->
 
     notifyOn('warning')
     notifyOn('critical')
+
+    robot.respond /show config/, (msg) ->
+        msg.reply config
 
     monitor.start()
